@@ -1004,7 +1004,7 @@ fn spvToolsLanguageHeader(b: *std.Build, output: std.Build.LazyPath, grammar_fil
 
 // TODO: Use non-system python (allyourcodebase/cpython?, but it's not updated yet)
 fn pythonCommand(b: *std.Build) !*std.Build.Step.Run {
-    const cmd = b.addSystemCommand(&.{"python"});
+    const cmd = b.addSystemCommand(&.{"python3"});
     return cmd;
 }
 
