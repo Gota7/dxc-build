@@ -1283,8 +1283,8 @@ const Version = struct {
 
     pub fn make(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!void {
         const self: *Version = @fieldParentPtr("step", step);
-        const file: std.fs.File = .stdout();
-        var writer = file.writer(&.{});
+        const file: std.Io.File = .stdout();
+        var writer = file.writer(step.owner.graph.io, &.{});
         try writer.interface.print("{f}\n", .{self.version});
     }
 };
