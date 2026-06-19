@@ -204,18 +204,18 @@ pub fn build(b: *std.Build) !void {
         lib.installConfigHeader(config_header);
     }
 
-    inline for (@typeInfo(sources).@"struct".decls) |decl| {
+    inline for (@typeInfo(sources).@"struct".decl_names) |decl| {
         llvm_root_module.addCSourceFiles(.{
-            .files = @field(sources, decl.name),
-            .root = lib_path.path(b, decl.name),
+            .files = @field(sources, decl),
+            .root = lib_path.path(b, decl),
             .flags = cxx_flags,
         });
     }
 
-    inline for (@typeInfo(sources_c).@"struct".decls) |decl| {
+    inline for (@typeInfo(sources_c).@"struct".decl_names) |decl| {
         llvm_root_module.addCSourceFiles(.{
-            .files = @field(sources_c, decl.name),
-            .root = lib_path.path(b, decl.name),
+            .files = @field(sources_c, decl),
+            .root = lib_path.path(b, decl),
             .flags = &.{
                 "-std=c11",                  "-Wno-unused-command-line-argument",
                 "-Wno-unused-variable",      "-Wno-missing-exception-spec",
@@ -266,10 +266,10 @@ pub fn build(b: *std.Build) !void {
         .include_extensions = include_extensions,
     });
 
-    inline for (@typeInfo(clang_sources).@"struct".decls) |decl| {
+    inline for (@typeInfo(clang_sources).@"struct".decl_names) |decl| {
         clang_root_module.addCSourceFiles(.{
-            .files = @field(clang_sources, decl.name),
-            .root = clang_lib_path.path(b, decl.name),
+            .files = @field(clang_sources, decl),
+            .root = clang_lib_path.path(b, decl),
             .flags = cxx_flags,
         });
     }
@@ -497,10 +497,6 @@ pub fn build(b: *std.Build) !void {
         .linkage = .dynamic,
     });
     b.installArtifact(dxil);
-
-    const version = try Version.init(b);
-    const version_step = b.step("version", "Get build version");
-    version_step.dependOn(&version.step);
 }
 
 pub const sources = struct {
@@ -1250,41 +1246,4 @@ const spvtools_reduce_sources: []const []const u8 = &.{
     "structured_construct_to_block_reduction_opportunity_finder.cpp",
     "structured_loop_to_selection_reduction_opportunity.cpp",
     "structured_loop_to_selection_reduction_opportunity_finder.cpp",
-};
-
-const Version = struct {
-    step: std.Build.Step,
-    version: std.SemanticVersion,
-
-    pub fn init(b: *std.Build) !*Version {
-        var tree = try std.zig.Ast.parse(b.allocator, @embedFile("build.zig.zon"), .zon);
-        defer tree.deinit(b.allocator);
-
-        const version = tree.tokenSlice(tree.nodes.items(.main_token)[2]);
-        const semantic_version = try std.SemanticVersion.parse(version[1 .. version.len - 1]);
-
-        const self = b.allocator.create(Version) catch @panic("OOM");
-        self.step = std.Build.Step.init(.{
-            .name = "version",
-            .id = .custom,
-            .owner = b,
-            .makeFn = Version.make,
-        });
-        self.version = semantic_version;
-        if (self.version.pre) |pre| {
-            if (std.mem.eql(u8, pre, "dev")) {
-                const hash = b.run(&.{ "git", "rev-parse", "--short", "HEAD" });
-                const trimmed = std.mem.trim(u8, hash, "\r\n ");
-                self.version.pre = b.allocator.dupe(u8, trimmed) catch @panic("OOM");
-            }
-        }
-        return self;
-    }
-
-    pub fn make(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!void {
-        const self: *Version = @fieldParentPtr("step", step);
-        const file: std.Io.File = .stdout();
-        var writer = file.writer(step.owner.graph.io, &.{});
-        try writer.interface.print("{f}\n", .{self.version});
-    }
 };
