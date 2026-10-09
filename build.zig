@@ -204,18 +204,18 @@ pub fn build(b: *std.Build) !void {
         lib.installConfigHeader(config_header);
     }
 
-    inline for (@typeInfo(sources).@"struct".decls) |decl| {
+    inline for (@typeInfo(sources).@"struct".decl_names) |decl_name| {
         llvm_root_module.addCSourceFiles(.{
-            .files = @field(sources, decl.name),
-            .root = lib_path.path(b, decl.name),
+            .files = @field(sources, decl_name),
+            .root = lib_path.path(b, decl_name),
             .flags = cxx_flags,
         });
     }
 
-    inline for (@typeInfo(sources_c).@"struct".decls) |decl| {
+    inline for (@typeInfo(sources_c).@"struct".decl_names) |decl_name| {
         llvm_root_module.addCSourceFiles(.{
-            .files = @field(sources_c, decl.name),
-            .root = lib_path.path(b, decl.name),
+            .files = @field(sources_c, decl_name),
+            .root = lib_path.path(b, decl_name),
             .flags = &.{
                 "-std=c11",                  "-Wno-unused-command-line-argument",
                 "-Wno-unused-variable",      "-Wno-missing-exception-spec",
@@ -266,10 +266,10 @@ pub fn build(b: *std.Build) !void {
         .include_extensions = include_extensions,
     });
 
-    inline for (@typeInfo(clang_sources).@"struct".decls) |decl| {
+    inline for (@typeInfo(clang_sources).@"struct".decl_names) |decl_name| {
         clang_root_module.addCSourceFiles(.{
-            .files = @field(clang_sources, decl.name),
-            .root = clang_lib_path.path(b, decl.name),
+            .files = @field(clang_sources, decl_name),
+            .root = clang_lib_path.path(b, decl_name),
             .flags = cxx_flags,
         });
     }
@@ -498,9 +498,19 @@ pub fn build(b: *std.Build) !void {
     });
     b.installArtifact(dxil);
 
-    const version = try Version.init(b);
+    // Zig 0.17 has no custom make functions any more, so a small host program prints the version.
+    const print_version = b.addExecutable(.{
+        .name = "print-version",
+        .root_module = b.createModule(.{
+            .root_source_file = b.addWriteFiles().add("print_version.zig", print_version_source),
+            .target = b.graph.host,
+        }),
+    });
+    const print_version_run = b.addRunArtifact(print_version);
+    print_version_run.addArg(b.fmt("{f}", .{try packageVersion(b)}));
+    print_version_run.has_side_effects = true;
     const version_step = b.step("version", "Get build version");
-    version_step.dependOn(&version.step);
+    version_step.dependOn(&print_version_run.step);
 }
 
 pub const sources = struct {
@@ -1252,39 +1262,32 @@ const spvtools_reduce_sources: []const []const u8 = &.{
     "structured_loop_to_selection_reduction_opportunity_finder.cpp",
 };
 
-const Version = struct {
-    step: std.Build.Step,
-    version: std.SemanticVersion,
+/// The package version from build.zig.zon; a "dev" pre-release is replaced by the git short hash.
+fn packageVersion(b: *std.Build) !std.SemanticVersion {
+    var tree = try std.zig.Ast.parse(b.allocator, @embedFile("build.zig.zon"), .{ .mode = .zon });
+    defer tree.deinit(b.allocator);
 
-    pub fn init(b: *std.Build) !*Version {
-        var tree = try std.zig.Ast.parse(b.allocator, @embedFile("build.zig.zon"), .zon);
-        defer tree.deinit(b.allocator);
-
-        const version = tree.tokenSlice(tree.nodes.items(.main_token)[2]);
-        const semantic_version = try std.SemanticVersion.parse(version[1 .. version.len - 1]);
-
-        const self = b.allocator.create(Version) catch @panic("OOM");
-        self.step = std.Build.Step.init(.{
-            .name = "version",
-            .id = .custom,
-            .owner = b,
-            .makeFn = Version.make,
-        });
-        self.version = semantic_version;
-        if (self.version.pre) |pre| {
-            if (std.mem.eql(u8, pre, "dev")) {
-                const hash = b.run(&.{ "git", "rev-parse", "--short", "HEAD" });
-                const trimmed = std.mem.trim(u8, hash, "\r\n ");
-                self.version.pre = b.allocator.dupe(u8, trimmed) catch @panic("OOM");
-            }
+    const version = tree.tokenSlice(tree.nodes.items(.main_token)[2]);
+    var semantic_version = try std.SemanticVersion.parse(version[1 .. version.len - 1]);
+    if (semantic_version.pre) |pre| {
+        if (std.mem.eql(u8, pre, "dev")) {
+            const hash = b.run(&.{ "git", "rev-parse", "--short", "HEAD" });
+            const trimmed = std.mem.trim(u8, hash, "\r\n ");
+            semantic_version.pre = b.allocator.dupe(u8, trimmed) catch @panic("OOM");
         }
-        return self;
     }
+    return semantic_version;
+}
 
-    pub fn make(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!void {
-        const self: *Version = @fieldParentPtr("step", step);
-        const file: std.Io.File = .stdout();
-        var writer = file.writer(step.owner.graph.io, &.{});
-        try writer.interface.print("{f}\n", .{self.version});
-    }
-};
+const print_version_source =
+    \\const std = @import("std");
+    \\
+    \\pub fn main(init: std.process.Init) !void {
+    \\    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    \\    var buffer: [256]u8 = undefined;
+    \\    var writer = std.Io.File.stdout().writer(init.io, &buffer);
+    \\    try writer.interface.print("{s}\n", .{args[1]});
+    \\    try writer.interface.flush();
+    \\}
+    \\
+;
